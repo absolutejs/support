@@ -558,15 +558,25 @@ export const createSupportDesk = (options: CreateSupportDeskOptions) => {
   };
 
   /** A side has read the ticket: clears its unread marker. */
+  /** Clears one side's unread flag. Writes nothing when it is already
+   *  clear, so reading a ticket never looks like a change to it (a change
+   *  feed or trigger watching the table stays quiet). */
   const markRead = async (ticketId: string, side: "agent" | "requester") => {
-    await db
+    const flag =
+      side === "agent"
+        ? supportTickets.agent_unread
+        : supportTickets.requester_unread;
+    const changed = await db
       .update(supportTickets)
       .set(
         side === "agent"
           ? { agent_unread: false }
           : { requester_unread: false },
       )
-      .where(eq(supportTickets.id, ticketId));
+      .where(and(eq(supportTickets.id, ticketId), eq(flag, true)))
+      .returning({ id: supportTickets.id });
+
+    return changed.length > 0;
   };
 
   /**

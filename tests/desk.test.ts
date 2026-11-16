@@ -166,6 +166,16 @@ describe("the conversation", () => {
   });
 });
 
+describe("reading", () => {
+  test("marking read writes only when something was unread", async () => {
+    const ticket = await openOne();
+
+    expect(await desk.markRead(ticket.id, "agent")).toBe(true);
+    expect(await desk.markRead(ticket.id, "agent")).toBe(false);
+    expect((await desk.get(ticket.id))?.ticket.agentUnread).toBe(false);
+  });
+});
+
 describe("status, priority and assignment", () => {
   test("resolving stamps when and why, and every change is an event", async () => {
     const ticket = await openOne();
