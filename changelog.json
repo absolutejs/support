@@ -1,0 +1,42 @@
+{
+	"contract": 1,
+	"name": "@absolutejs/support",
+	"releases": [
+		{
+			"changes": [
+				{
+					"detail": "The first release: support_tickets, support_messages and support_events as Drizzle tables, and createSupportDesk over them: open (idempotent per submission), reply (agents' first public reply starts the response clock and waits on the requester; notes are agent-only; a requester's reply reopens), setStatus, setPriority, assign (each an event), get (with a requester view without notes or history), list with filters and paging, statusCounts, markRead and analytics (opened, resolved, unanswered, median first response and resolution, backlog by priority), with an onChange hook for emails and live signals.",
+					"kind": "added",
+					"summary": "Support tickets: a report with its context becomes a ticket, a threaded conversation with internal notes, and response-time analytics",
+					"symbols": [
+						"createSupportDesk",
+						"toSupportTicket",
+						"supportTickets",
+						"supportMessages",
+						"supportEvents",
+						"supportDrizzleSchema",
+						"TICKET_STATUSES",
+						"TICKET_PRIORITIES",
+						"MESSAGE_AUTHORS",
+						"AnyPgDatabase",
+						"CreateSupportDeskOptions",
+						"OpenTicketInput",
+						"ReplyInput",
+						"SupportDesk",
+						"SupportEvent",
+						"SupportMessage",
+						"SupportTicket",
+						"TicketChange",
+						"TicketListQuery",
+						"MessageAuthor",
+						"TicketContext",
+						"TicketPriority",
+						"TicketStatus"
+					]
+				}
+			],
+			"date": "2026-11-16",
+			"version": "0.1.0-beta.1"
+		}
+	]
+}
