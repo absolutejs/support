@@ -19,7 +19,8 @@ Peer: `drizzle-orm` >= 1.0.0-rc.4. Postgres.
 
 ## Schema
 
-Three tables, exported as Drizzle definitions; register them in your own schema
+Six tables (tickets, messages, events, attachments, diagnostics,
+recipients), exported as Drizzle definitions; register them in your own schema
 so your migrations own them:
 
 ```ts
@@ -27,6 +28,9 @@ export {
   supportTickets,
   supportMessages,
   supportEvents,
+  supportAttachments,
+  supportDiagnostics,
+  supportRecipients,
 } from "@absolutejs/support";
 ```
 
@@ -76,10 +80,52 @@ await desk.get(ticketId, { forRequester: true }); // no notes, no history
 await desk.analytics(30);
 ```
 
+### Problem reports and fixes
+
+A report can carry the bug form (`report: { expected, actual, steps,
+frequency }`), what it's about in the application (`about: { type, id }`),
+and a note the page captured for the agents (`diagnosticNote`). A fix goes
+to the requester to try, and they say whether it held:
+
+```ts
+await desk.reply({ ticketId, author, kind: "fix", body, meta: { fixCommit } });
+// status `verifying`, retest `pending`
+await desk.verdict({ ticketId, by: { email }, works: true });
+// closed as `fixed`, retest `pass`, verified by them
+await desk.verdict({ ticketId, by: { email }, works: false, reason });
+// reopened, retest `fail`, with what they said
+```
+
+`kind: "note"` is an agents' note (the same as `internal: true`); a
+`resolution` closes a ticket as fixed. A requester's view
+(`get(id, { forRequester: true })`) leaves out notes, `internalNotes`, the
+`diagnosticNote` and the fix's commit.
+
+### Around a ticket
+
+```ts
+await desk.attachments.add({ ticketId, kind: "image", url, purpose: "report" });
+await desk.diagnostics.store({
+  ticketId,
+  captureId,
+  bundle,
+  sizeBytes,
+  expiresAt,
+});
+await desk.diagnostics.purgeExpired();
+await desk.recipients.add({ email, scope: "bug" }); // or "all"
+await desk.recipients.for(ticket.category); // who to tell about a new one
+await desk.findByReference({ reference, email }); // a guest's own ticket
+await desk.setNotes({ ticketId, internalNotes });
+await desk.editMessage({ messageId, body });
+await desk.remove(ticketId, actor); // out of every list and read
+```
+
 ### The rules
 
-- `open` waits on the agents, `pending` waits on the requester, `resolved` is
-  answered (the requester can reopen), `closed` is done.
+- `open` waits on the agents, `in-progress` is being worked on, `pending`
+  waits on the requester, `verifying` waits for the requester to try a fix,
+  `resolved` is answered (the requester can reopen), `closed` is done.
 - An agent's first **public** reply starts the response clock, once; it hands
   the ticket to the requester (`pending`). A note changes nothing but the
   thread, and the requester never sees it.
