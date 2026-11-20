@@ -481,3 +481,24 @@ describe("around a ticket", () => {
     ]);
   });
 });
+
+describe("a requester writing back", () => {
+  test("doesn't take a ticket out of progress or out of verifying", async () => {
+    const ticket = await openOne();
+    await desk.reply({
+      author: AGENT,
+      body: "Try now.",
+      kind: "fix",
+      ticketId: ticket.id,
+    });
+    const wrote = await desk.reply({
+      author: { id: "user-1", kind: "requester" },
+      body: "Trying it tonight.",
+      ticketId: ticket.id,
+    });
+    expect(wrote?.ticket.status).toBe("verifying");
+    expect(wrote?.message.ticketId).toBe(ticket.id);
+    const message = await desk.getMessage(wrote?.message.id ?? 0);
+    expect(message?.ticketId).toBe(ticket.id);
+  });
+});
