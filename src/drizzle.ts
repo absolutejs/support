@@ -242,7 +242,7 @@ export const supportAttachments = pgTable(
   "support_attachments",
   {
     created_at: timestamp().notNull().defaultNow(),
-    id: bigserial({ mode: "number" }).primaryKey(),
+    id: uuid().primaryKey().defaultRandom(),
     /** `image`, `video`, `audio`, `file`. */
     kind: varchar({ length: 16 }).notNull(),
     name: varchar({ length: 255 }),
@@ -269,7 +269,7 @@ export const supportDiagnostics = pgTable(
     capture_id: varchar({ length: 128 }).notNull(),
     created_at: timestamp().notNull().defaultNow(),
     expires_at: timestamp().notNull(),
-    id: bigserial({ mode: "number" }).primaryKey(),
+    id: uuid().primaryKey().defaultRandom(),
     size_bytes: integer().notNull().default(0),
     ticket_id: uuid()
       .notNull()
@@ -290,7 +290,7 @@ export const supportRecipients = pgTable(
   {
     created_at: timestamp().notNull().defaultNow(),
     email: varchar({ length: 320 }).notNull(),
-    id: bigserial({ mode: "number" }).primaryKey(),
+    id: uuid().primaryKey().defaultRandom(),
     /** `all`, or one category. */
     scope: varchar({ length: 40 }).notNull().default("all"),
   },

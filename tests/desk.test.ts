@@ -49,7 +49,8 @@ const SCHEMA = `
     to_value varchar(320)
   );
   CREATE TABLE support_attachments (
-    created_at timestamp NOT NULL DEFAULT now(), id bigserial PRIMARY KEY,
+    created_at timestamp NOT NULL DEFAULT now(),
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     kind varchar(16) NOT NULL, name varchar(255),
     purpose varchar(8) NOT NULL DEFAULT 'report', size_bytes integer,
     ticket_id uuid NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
@@ -58,14 +59,16 @@ const SCHEMA = `
   CREATE TABLE support_diagnostics (
     bundle jsonb NOT NULL, capture_id varchar(128) NOT NULL,
     created_at timestamp NOT NULL DEFAULT now(), expires_at timestamp NOT NULL,
-    id bigserial PRIMARY KEY, size_bytes integer NOT NULL DEFAULT 0,
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    size_bytes integer NOT NULL DEFAULT 0,
     ticket_id uuid NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE
   );
   CREATE UNIQUE INDEX support_diagnostics_capture_idx
     ON support_diagnostics (ticket_id, capture_id);
   CREATE TABLE support_recipients (
     created_at timestamp NOT NULL DEFAULT now(), email varchar(320) NOT NULL,
-    id bigserial PRIMARY KEY, scope varchar(40) NOT NULL DEFAULT 'all'
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    scope varchar(40) NOT NULL DEFAULT 'all'
   );
   CREATE UNIQUE INDEX support_recipients_email_idx ON support_recipients (email);
 `;
@@ -394,7 +397,7 @@ describe("around a ticket", () => {
     expect(
       (await desk.attachments.list(ticket.id)).map((file) => file.purpose),
     ).toEqual(["report", "fix"]);
-    expect(await desk.attachments.remove(proof?.id ?? 0)).toBe(true);
+    expect(await desk.attachments.remove(proof?.id ?? "")).toBe(true);
     expect(await desk.attachments.list(ticket.id)).toHaveLength(1);
   });
 
@@ -409,7 +412,7 @@ describe("around a ticket", () => {
     };
     const first = await desk.diagnostics.store(capture);
     const again = await desk.diagnostics.store(capture);
-    expect(again?.id).toBe(first?.id ?? -1);
+    expect(again?.id).toBe(first?.id ?? "none");
     await desk.diagnostics.store({
       ...capture,
       captureId: "cap-old",
