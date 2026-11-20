@@ -502,3 +502,21 @@ describe("a requester writing back", () => {
     expect(message?.ticketId).toBe(ticket.id);
   });
 });
+
+describe("finding and reopening", () => {
+  test("two retries of one submission at once open one ticket", async () => {
+    const [first, second] = await Promise.all([
+      openOne({ submissionId: "sub-race" }),
+      openOne({ submissionId: "sub-race" }),
+    ]);
+    expect(first.id).toBe(second.id);
+    expect((await desk.list()).total).toBe(1);
+  });
+
+  test("search finds words in the conversation", async () => {
+    const ticket = await openOne({ body: "The embroidery preview is blurry." });
+    await openOne({ submissionId: "other", subject: "Shipping" });
+    const found = await desk.list({ query: "blurry" });
+    expect(found.tickets.map((row) => row.id)).toEqual([ticket.id]);
+  });
+});

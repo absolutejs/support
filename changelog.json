@@ -5,6 +5,22 @@
 		{
 			"changes": [
 				{
+					"detail": "open() stays idempotent per submission when two retries arrive at the same moment: the second lands on the unique index and gets the ticket the first opened, where before it threw a constraint error. list({ query }) also finds words anywhere in a ticket's conversation, not only its subject and requester.",
+					"kind": "fixed",
+					"summary": "Concurrent retries of one submission open one ticket; search looks in the conversation",
+					"symbols": [
+						"createSupportDesk",
+						"SupportDesk",
+						"TicketListQuery"
+					]
+				}
+			],
+			"date": "2026-11-20",
+			"version": "0.2.0-beta.2"
+		},
+		{
+			"changes": [
+				{
 					"detail": "A message now carries its ticketId, so an application can check that a message belongs to the ticket in the URL before an edit. A requester's reply no longer takes a ticket out of in-progress (somebody is already on it) or out of verifying (a fix waits on their verdict, which only verdict() gives); from any other status it still reopens it.",
 					"kind": "changed",
 					"summary": "Messages say which ticket they're on; a requester's reply leaves in-progress and verifying tickets where they are",
