@@ -17,15 +17,25 @@ import {
   ilike,
   inArray,
   isNotNull,
+  isNull,
+  lt,
   or,
   sql,
   type SQL,
 } from "drizzle-orm";
 import type { PgAsyncDatabase } from "drizzle-orm/pg-core";
 import {
+  supportAttachments,
+  supportDiagnostics,
   supportEvents,
   supportMessages,
+  supportRecipients,
   supportTickets,
+  type AttachmentPurpose,
+  type MessageKind,
+  type MessageMeta,
+  type RetestResult,
+  type TicketReport,
   type MessageAuthor,
   type TicketContext,
   type TicketPriority,
@@ -42,10 +52,26 @@ const DEFAULT_ANALYTICS_DAYS = 30;
 type TicketRow = typeof supportTickets.$inferSelect;
 type MessageRow = typeof supportMessages.$inferSelect;
 type EventRow = typeof supportEvents.$inferSelect;
+type AttachmentRow = typeof supportAttachments.$inferSelect;
+type DiagnosticRow = typeof supportDiagnostics.$inferSelect;
+type RecipientRow = typeof supportRecipients.$inferSelect;
 
 export type SupportTicket = {
+  /** What it's about in the application: an order, a quote… */
+  about: { id: string; type: string } | null;
   agentUnread: boolean;
   assignee: string | null;
+  /** For the agents only (left out of a requester's view). */
+  diagnosticNote: string | null;
+  /** The fix: what was done, the change (agents only), and when. */
+  fix: { at: number | null; commit: string | null; summary: string } | null;
+  followUpNotes: string | null;
+  /** For the agents only (left out of a requester's view). */
+  internalNotes: string | null;
+  report: TicketReport | null;
+  retest: RetestResult | null;
+  verifiedAt: number | null;
+  verifiedBy: string | null;
   category: string;
   closeReason: string | null;
   context: TicketContext;
@@ -70,8 +96,40 @@ export type SupportMessage = {
   author: { id: string | null; kind: MessageAuthor; name: string | null };
   body: string;
   createdAt: number;
+  editedAt: number | null;
   id: number;
   internal: boolean;
+  kind: MessageKind;
+  meta: MessageMeta | null;
+};
+
+export type SupportAttachment = {
+  createdAt: number;
+  id: number;
+  kind: string;
+  name: string | null;
+  purpose: AttachmentPurpose;
+  sizeBytes: number | null;
+  ticketId: string;
+  uploadedBy: string | null;
+  url: string;
+};
+
+export type SupportDiagnostic = {
+  bundle: Record<string, unknown>;
+  captureId: string;
+  createdAt: number;
+  expiresAt: number;
+  id: number;
+  sizeBytes: number;
+  ticketId: string;
+};
+
+export type SupportRecipient = {
+  createdAt: number;
+  email: string;
+  id: number;
+  scope: string;
 };
 
 export type SupportEvent = {
@@ -87,8 +145,27 @@ export type SupportEvent = {
 const time = (value: Date | null) => (value === null ? null : value.getTime());
 
 export const toSupportTicket = (row: TicketRow): SupportTicket => ({
+  about:
+    row.about_type !== null && row.about_id !== null
+      ? { id: row.about_id, type: row.about_type }
+      : null,
   agentUnread: row.agent_unread,
   assignee: row.assignee,
+  diagnosticNote: row.diagnostic_note,
+  fix:
+    row.fix_summary === null
+      ? null
+      : {
+          at: time(row.fixed_at),
+          commit: row.fix_commit,
+          summary: row.fix_summary,
+        },
+  followUpNotes: row.follow_up_notes,
+  internalNotes: row.internal_notes,
+  report: row.report,
+  retest: row.retest,
+  verifiedAt: time(row.verified_at),
+  verifiedBy: row.verified_by,
   category: row.category,
   closeReason: row.close_reason,
   context: row.context,
@@ -113,13 +190,66 @@ export const toSupportTicket = (row: TicketRow): SupportTicket => ({
   updatedAt: row.updated_at.getTime(),
 });
 
-const toSupportMessage = (row: MessageRow): SupportMessage => ({
+export const toSupportMessage = (row: MessageRow): SupportMessage => ({
   author: { id: row.author_id, kind: row.author_kind, name: row.author_name },
   body: row.body,
   createdAt: row.created_at.getTime(),
+  editedAt: time(row.edited_at),
   id: Number(row.id),
   internal: row.internal,
+  kind: row.kind,
+  meta: row.meta,
 });
+
+const toSupportAttachment = (row: AttachmentRow): SupportAttachment => ({
+  createdAt: row.created_at.getTime(),
+  id: Number(row.id),
+  kind: row.kind,
+  name: row.name,
+  purpose: row.purpose,
+  sizeBytes: row.size_bytes,
+  ticketId: row.ticket_id,
+  uploadedBy: row.uploaded_by,
+  url: row.url,
+});
+
+const toSupportDiagnostic = (row: DiagnosticRow): SupportDiagnostic => ({
+  bundle: row.bundle,
+  captureId: row.capture_id,
+  createdAt: row.created_at.getTime(),
+  expiresAt: row.expires_at.getTime(),
+  id: Number(row.id),
+  sizeBytes: row.size_bytes,
+  ticketId: row.ticket_id,
+});
+
+const toSupportRecipient = (row: RecipientRow): SupportRecipient => ({
+  createdAt: row.created_at.getTime(),
+  email: row.email,
+  id: Number(row.id),
+  scope: row.scope,
+});
+
+/** A ticket as its requester may see it: the agents' notes, the page's
+ *  diagnostic note and the fix's change are left out. */
+export const forRequesterTicket = (ticket: SupportTicket): SupportTicket => ({
+  ...ticket,
+  diagnosticNote: null,
+  fix: ticket.fix === null ? null : { ...ticket.fix, commit: null },
+  internalNotes: null,
+});
+
+/** A message as the requester may see it: what it recorded about the
+ *  fix's change is left out. */
+export const forRequesterMessage = (
+  message: SupportMessage,
+): SupportMessage => {
+  if (message.meta === null || message.meta.fixCommit === undefined)
+    return message;
+  const { fixCommit: _hidden, ...meta } = message.meta;
+
+  return { ...message, meta };
+};
 
 const toSupportEvent = (row: EventRow): SupportEvent => ({
   actor: row.actor,
@@ -132,12 +262,18 @@ const toSupportEvent = (row: EventRow): SupportEvent => ({
 });
 
 export type OpenTicketInput = {
+  /** What it's about in the application: an order, a quote… */
+  about?: { id: string; type: string };
   body: string;
+  /** What the page captured for the agents; never shown to the requester. */
+  diagnosticNote?: string;
   category?: string;
   context?: TicketContext;
   errorFingerprint?: string;
   priority?: TicketPriority;
   replayId?: string;
+  /** The bug form: expected, actual, steps, how often. */
+  report?: TicketReport;
   requester: { email: string; id?: string; name?: string };
   source?: string;
   subject: string;
@@ -153,8 +289,17 @@ export type ReplyInput = {
     name?: string;
   };
   body: string;
-  /** An agent's note to other agents: never shown to the requester. */
+  /** An agent's note to other agents: never shown to the requester. The
+   *  same as kind `note`. */
   internal?: boolean;
+  /**
+   * `reply` (the default) or `note`; `fix` sends a fix for the requester to
+   * try (the ticket waits in `verifying`); `resolution` closes it as fixed;
+   * `reject` says a fix didn't hold and reopens it.
+   */
+  kind?: MessageKind;
+  /** What this message records about the fix, at the time. */
+  meta?: MessageMeta;
   ticketId: string;
 };
 
@@ -165,11 +310,17 @@ export type TicketChange =
       kind: "status" | "priority" | "assignee";
       event: SupportEvent;
       ticket: SupportTicket;
-    };
+    }
+  | { kind: "deleted"; ticket: SupportTicket };
+
+export type TicketSort = "created" | "name" | "priority" | "status" | "updated";
 
 export type TicketListQuery = {
   /** One agent's tickets; `null` for nobody's. */
   assignee?: string | null;
+  category?: string;
+  /** Oldest or newest first, by `sort` (newest first by default). */
+  direction?: "asc" | "desc";
   limit?: number;
   offset?: number;
   priority?: TicketPriority;
@@ -177,8 +328,11 @@ export type TicketListQuery = {
   query?: string;
   /** One requester's tickets, by their id or email. */
   requester?: { email?: string; id?: string };
-  /** One status, or `active` for open and pending together. */
+  sort?: TicketSort;
+  /** One status, or `active` for everything not yet resolved or closed. */
   status?: TicketStatus | "active";
+  /** Any of these statuses. */
+  statuses?: TicketStatus[];
 };
 
 export type CreateSupportDeskOptions = {
@@ -209,7 +363,9 @@ export const createSupportDesk = (options: CreateSupportDeskOptions) => {
     const [row] = await db
       .select()
       .from(supportTickets)
-      .where(eq(supportTickets.id, ticketId));
+      .where(
+        and(eq(supportTickets.id, ticketId), isNull(supportTickets.deleted_at)),
+      );
 
     return row;
   };
@@ -258,8 +414,12 @@ export const createSupportDesk = (options: CreateSupportDeskOptions) => {
     const [ticket] = await db
       .insert(supportTickets)
       .values({
+        about_id: input.about?.id ?? null,
+        about_type: input.about?.type ?? null,
         category: input.category ?? "problem",
         context: input.context ?? {},
+        diagnostic_note: input.diagnosticNote ?? null,
+        report: input.report ?? null,
         error_fingerprint: input.errorFingerprint ?? null,
         priority: input.priority ?? "normal",
         replay_id: input.replayId ?? null,
@@ -302,7 +462,11 @@ export const createSupportDesk = (options: CreateSupportDeskOptions) => {
   const reply = async (input: ReplyInput) => {
     const ticket = await findTicket(input.ticketId);
     if (!ticket) return null;
-    const internal = input.author.kind === "agent" && input.internal === true;
+    const kind: MessageKind =
+      input.kind ?? (input.internal === true ? "note" : "reply");
+    const internal =
+      input.author.kind === "agent" &&
+      (kind === "note" || input.internal === true);
     const [message] = await db
       .insert(supportMessages)
       .values({
@@ -311,21 +475,65 @@ export const createSupportDesk = (options: CreateSupportDeskOptions) => {
         author_name: input.author.name ?? null,
         body: input.body,
         internal,
+        kind,
+        meta: input.meta ?? null,
         ticket_id: ticket.id,
       })
       .returning();
     const now = new Date();
+    const meta = input.meta ?? {};
     let status: TicketStatus = ticket.status;
-    if (input.author.kind === "requester") status = "open";
-    else if (!internal && ticket.status === "open") status = "pending";
+    if (kind === "fix") status = "verifying";
+    else if (kind === "resolution") status = "closed";
+    else if (kind === "reject") status = "open";
+    else if (internal) status = ticket.status;
+    else if (input.author.kind === "requester") status = "open";
+    else if (ticket.status === "open" || ticket.status === "in-progress")
+      status = "pending";
     const statusChanged = status !== ticket.status;
+    /* A fix or resolution writes what was done onto the ticket; a reject
+     * keeps what the requester said; whoever verified it, when they did. */
+    const fixed =
+      kind === "fix" || kind === "resolution"
+        ? {
+            fix_commit: meta.fixCommit ?? ticket.fix_commit,
+            fix_summary: input.body,
+            fixed_at: now,
+          }
+        : {};
+    const retest =
+      meta.retest !== undefined && meta.retest !== null
+        ? { retest: meta.retest }
+        : kind === "fix"
+          ? { retest: "pending" as const }
+          : kind === "reject"
+            ? { retest: "fail" as const }
+            : {};
+    const verified =
+      typeof meta.verifiedBy === "string" && meta.verifiedBy !== ""
+        ? { verified_at: now, verified_by: meta.verifiedBy }
+        : {};
+    const followUp =
+      kind === "reject"
+        ? { follow_up_notes: meta.followUpNotes ?? input.body }
+        : {};
     const [updated] = await db
       .update(supportTickets)
       .set({
         updated_at: now,
+        ...fixed,
+        ...retest,
+        ...verified,
+        ...followUp,
         ...(statusChanged
           ? {
               status,
+              ...(status === "closed"
+                ? {
+                    close_reason: "fixed",
+                    resolved_at: ticket.resolved_at ?? now,
+                  }
+                : {}),
               ...(status === "open"
                 ? { close_reason: null, resolved_at: null }
                 : {}),
@@ -473,19 +681,34 @@ export const createSupportDesk = (options: CreateSupportDeskOptions) => {
             .orderBy(asc(supportEvents.at), asc(supportEvents.id)),
     ]);
 
+    const shown = messages.map(toSupportMessage);
+
     return {
       events: events.map(toSupportEvent),
-      messages: messages.map(toSupportMessage),
-      ticket: toSupportTicket(ticket),
+      messages: view.forRequester ? shown.map(forRequesterMessage) : shown,
+      ticket: view.forRequester
+        ? forRequesterTicket(toSupportTicket(ticket))
+        : toSupportTicket(ticket),
     };
   };
 
   const filtersFor = (query: TicketListQuery) => {
-    const filters: SQL[] = [];
+    const filters: SQL[] = [isNull(supportTickets.deleted_at)];
     if (query.status === "active")
-      filters.push(inArray(supportTickets.status, ["open", "pending"]));
+      filters.push(
+        inArray(supportTickets.status, [
+          "open",
+          "in-progress",
+          "pending",
+          "verifying",
+        ]),
+      );
     else if (query.status !== undefined)
       filters.push(eq(supportTickets.status, query.status));
+    if (query.statuses !== undefined && query.statuses.length > 0)
+      filters.push(inArray(supportTickets.status, query.statuses));
+    if (query.category !== undefined)
+      filters.push(eq(supportTickets.category, query.category));
     if (query.priority !== undefined)
       filters.push(eq(supportTickets.priority, query.priority));
     if (query.assignee === null)
@@ -497,6 +720,7 @@ export const createSupportDesk = (options: CreateSupportDeskOptions) => {
       const match = or(
         ilike(supportTickets.subject, text),
         ilike(supportTickets.requester_email, text),
+        ilike(supportTickets.requester_name, text),
       );
       if (match) filters.push(match);
     }
@@ -518,7 +742,20 @@ export const createSupportDesk = (options: CreateSupportDeskOptions) => {
     return filters;
   };
 
-  /** Most recently changed first, the page and its total. */
+  const SORT_COLUMNS = {
+    created: supportTickets.created_at,
+    name: supportTickets.requester_name,
+    priority: supportTickets.priority,
+    status: supportTickets.status,
+    updated: supportTickets.updated_at,
+  } as const;
+  const orderFor = (query: TicketListQuery) => {
+    const column = SORT_COLUMNS[query.sort ?? "updated"];
+
+    return query.direction === "asc" ? asc(column) : desc(column);
+  };
+
+  /** Most recently changed first (or as sorted), the page and its total. */
   const list = async (query: TicketListQuery = {}) => {
     const limit = Math.min(query.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
     const offset = Math.max(query.offset ?? 0, 0);
@@ -528,7 +765,7 @@ export const createSupportDesk = (options: CreateSupportDeskOptions) => {
         .select()
         .from(supportTickets)
         .where(where)
-        .orderBy(desc(supportTickets.updated_at))
+        .orderBy(orderFor(query))
         .limit(limit)
         .offset(offset),
       db.select({ value: count() }).from(supportTickets).where(where),
@@ -594,7 +831,12 @@ export const createSupportDesk = (options: CreateSupportDeskOptions) => {
           firstResponse: supportTickets.first_response_at,
         })
         .from(supportTickets)
-        .where(sql`${supportTickets.created_at} >= ${since}`),
+        .where(
+          and(
+            sql`${supportTickets.created_at} >= ${since}`,
+            isNull(supportTickets.deleted_at),
+          ),
+        ),
       db
         .select({
           created: supportTickets.created_at,
@@ -605,6 +847,7 @@ export const createSupportDesk = (options: CreateSupportDeskOptions) => {
           and(
             isNotNull(supportTickets.resolved_at),
             sql`${supportTickets.resolved_at} >= ${since}`,
+            isNull(supportTickets.deleted_at),
           ),
         ),
       db
@@ -613,7 +856,17 @@ export const createSupportDesk = (options: CreateSupportDeskOptions) => {
           priority: supportTickets.priority,
         })
         .from(supportTickets)
-        .where(inArray(supportTickets.status, ["open", "pending"]))
+        .where(
+          and(
+            inArray(supportTickets.status, [
+              "open",
+              "in-progress",
+              "pending",
+              "verifying",
+            ]),
+            isNull(supportTickets.deleted_at),
+          ),
+        )
         .groupBy(supportTickets.priority),
     ]);
 
@@ -643,17 +896,378 @@ export const createSupportDesk = (options: CreateSupportDeskOptions) => {
     };
   };
 
+  /**
+   * The requester's word on a fix waiting in `verifying`: it works (the
+   * ticket closes as fixed, verified by them) or it doesn't (it reopens,
+   * with what they said). Anything else is `not-verifying`.
+   */
+  const verdict = async (input: {
+    by: { email: string; id?: string; name?: string };
+    reason?: string;
+    ticketId: string;
+    works: boolean;
+  }) => {
+    const ticket = await findTicket(input.ticketId);
+    if (!ticket) return null;
+    if (ticket.status !== "verifying") return "not-verifying" as const;
+    const author = {
+      kind: "requester" as const,
+      ...(input.by.id === undefined
+        ? { id: input.by.email }
+        : { id: input.by.id }),
+      ...(input.by.name === undefined ? {} : { name: input.by.name }),
+    };
+
+    return input.works
+      ? reply({
+          author,
+          body: input.reason?.trim() || "Confirmed: this works now.",
+          kind: "resolution",
+          meta: { retest: "pass", verifiedBy: input.by.email },
+          ticketId: ticket.id,
+        })
+      : reply({
+          author,
+          body: input.reason?.trim() || "It still doesn't work.",
+          kind: "reject",
+          meta: {
+            followUpNotes: input.reason ?? null,
+            retest: "fail",
+            verifiedBy: input.by.email,
+          },
+          ticketId: ticket.id,
+        });
+  };
+
+  /** The agents' own notes on a ticket; `null` clears them. */
+  const setNotes = async (input: {
+    internalNotes: string | null;
+    ticketId: string;
+  }) => {
+    const [updated] = await db
+      .update(supportTickets)
+      .set({ internal_notes: input.internalNotes, updated_at: new Date() })
+      .where(
+        and(
+          eq(supportTickets.id, input.ticketId),
+          isNull(supportTickets.deleted_at),
+        ),
+      )
+      .returning();
+
+    return updated ? toSupportTicket(updated) : null;
+  };
+
+  /** Rewrite a message (its body or what it recorded), marked as edited.
+   *  Who may edit is the application's call. */
+  const editMessage = async (input: {
+    body?: string;
+    messageId: number;
+    meta?: MessageMeta | null;
+  }) => {
+    const [updated] = await db
+      .update(supportMessages)
+      .set({
+        edited_at: new Date(),
+        ...(input.body === undefined ? {} : { body: input.body }),
+        ...(input.meta === undefined ? {} : { meta: input.meta }),
+      })
+      .where(eq(supportMessages.id, input.messageId))
+      .returning();
+
+    return updated ? toSupportMessage(updated) : null;
+  };
+
+  /** One message, to check who wrote it before an edit. */
+  const getMessage = async (messageId: number) => {
+    const [row] = await db
+      .select()
+      .from(supportMessages)
+      .where(eq(supportMessages.id, messageId));
+
+    return row ? toSupportMessage(row) : null;
+  };
+
+  /** Take a ticket out of every list and read; kept for the record. */
+  const remove = async (ticketId: string, actor?: string) => {
+    const ticket = await findTicket(ticketId);
+    if (!ticket) return null;
+    const [updated] = await db
+      .update(supportTickets)
+      .set({ deleted_at: new Date(), updated_at: new Date() })
+      .where(eq(supportTickets.id, ticket.id))
+      .returning();
+    await record(ticket.id, "status", {
+      ...(actor === undefined ? {} : { actor }),
+      from: ticket.status,
+      note: "deleted",
+      to: ticket.status,
+    });
+    const view = toSupportTicket(updated as TicketRow);
+    await notify({ kind: "deleted", ticket: view });
+
+    return view;
+  };
+
+  /**
+   * A guest's own ticket by the reference they were given (the start of
+   * its id, at least six characters) and their email.
+   */
+  const findByReference = async (input: {
+    email: string;
+    reference: string;
+  }) => {
+    const reference = input.reference.toLowerCase().replace(/[^0-9a-f]/g, "");
+    if (reference.length < 6) return null;
+    const [row] = await db
+      .select()
+      .from(supportTickets)
+      .where(
+        and(
+          isNull(supportTickets.deleted_at),
+          eq(supportTickets.requester_email, input.email.trim().toLowerCase()),
+          sql`replace(${supportTickets.id}::text, '-', '') like ${`${reference}%`}`,
+        ),
+      )
+      .limit(1);
+
+    return row ? toSupportTicket(row) : null;
+  };
+
+  /** How many tickets the agents haven't read, in the given statuses (or
+   *  in any not yet resolved or closed). */
+  const unreadCount = async (statuses?: TicketStatus[]) => {
+    const [row] = await db
+      .select({ value: count() })
+      .from(supportTickets)
+      .where(
+        and(
+          isNull(supportTickets.deleted_at),
+          eq(supportTickets.agent_unread, true),
+          inArray(
+            supportTickets.status,
+            statuses ?? ["open", "in-progress", "pending", "verifying"],
+          ),
+        ),
+      );
+
+    return Number(row?.value ?? 0);
+  };
+
+  /** How many tickets are in each category. */
+  const categoryCounts = async () => {
+    const rows = await db
+      .select({
+        category: supportTickets.category,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(supportTickets)
+      .where(isNull(supportTickets.deleted_at))
+      .groupBy(supportTickets.category);
+
+    return rows.map((row) => ({
+      category: row.category,
+      count: Number(row.count),
+    }));
+  };
+
+  const touch = (ticketId: string) =>
+    db
+      .update(supportTickets)
+      .set({ updated_at: new Date() })
+      .where(eq(supportTickets.id, ticketId));
+
+  /** Evidence on a ticket: the requester's (`report`) or the agents'
+   *  proof of a fix (`fix`). The file is stored by the application. */
+  const attachments = {
+    add: async (input: {
+      kind: string;
+      name?: string;
+      purpose?: AttachmentPurpose;
+      sizeBytes?: number;
+      ticketId: string;
+      uploadedBy?: string;
+      url: string;
+    }) => {
+      const ticket = await findTicket(input.ticketId);
+      if (!ticket) return null;
+      const [row] = await db
+        .insert(supportAttachments)
+        .values({
+          kind: input.kind,
+          name: input.name ?? null,
+          purpose: input.purpose ?? "report",
+          size_bytes: input.sizeBytes ?? null,
+          ticket_id: ticket.id,
+          uploaded_by: input.uploadedBy ?? null,
+          url: input.url,
+        })
+        .returning();
+      await touch(ticket.id);
+
+      return toSupportAttachment(row as AttachmentRow);
+    },
+    list: async (ticketId: string) =>
+      (
+        await db
+          .select()
+          .from(supportAttachments)
+          .where(eq(supportAttachments.ticket_id, ticketId))
+          .orderBy(
+            asc(supportAttachments.created_at),
+            asc(supportAttachments.id),
+          )
+      ).map(toSupportAttachment),
+    remove: async (attachmentId: number) => {
+      const removed = await db
+        .delete(supportAttachments)
+        .where(eq(supportAttachments.id, attachmentId))
+        .returning({ id: supportAttachments.id });
+
+      return removed.length > 0;
+    },
+  };
+
+  /** A browser's diagnostic capture with a report, kept until it
+   *  expires; storing the same capture twice keeps the first. */
+  const diagnostics = {
+    list: async (ticketId: string) => {
+      await db
+        .delete(supportDiagnostics)
+        .where(
+          and(
+            eq(supportDiagnostics.ticket_id, ticketId),
+            lt(supportDiagnostics.expires_at, new Date()),
+          ),
+        );
+
+      return (
+        await db
+          .select()
+          .from(supportDiagnostics)
+          .where(eq(supportDiagnostics.ticket_id, ticketId))
+          .orderBy(asc(supportDiagnostics.created_at))
+      ).map(toSupportDiagnostic);
+    },
+    purgeExpired: async () => {
+      const removed = await db
+        .delete(supportDiagnostics)
+        .where(lt(supportDiagnostics.expires_at, new Date()))
+        .returning({ id: supportDiagnostics.id });
+
+      return removed.length;
+    },
+    remove: async (diagnosticId: number) => {
+      const removed = await db
+        .delete(supportDiagnostics)
+        .where(eq(supportDiagnostics.id, diagnosticId))
+        .returning({ id: supportDiagnostics.id });
+
+      return removed.length > 0;
+    },
+    store: async (input: {
+      bundle: Record<string, unknown>;
+      captureId: string;
+      expiresAt: Date;
+      sizeBytes: number;
+      ticketId: string;
+    }) => {
+      const ticket = await findTicket(input.ticketId);
+      if (!ticket) return null;
+      await db
+        .insert(supportDiagnostics)
+        .values({
+          bundle: input.bundle,
+          capture_id: input.captureId,
+          expires_at: input.expiresAt,
+          size_bytes: input.sizeBytes,
+          ticket_id: ticket.id,
+        })
+        .onConflictDoNothing();
+      const [row] = await db
+        .select()
+        .from(supportDiagnostics)
+        .where(
+          and(
+            eq(supportDiagnostics.ticket_id, ticket.id),
+            eq(supportDiagnostics.capture_id, input.captureId),
+          ),
+        );
+
+      return row ? toSupportDiagnostic(row) : null;
+    },
+  };
+
+  /** Who hears about new tickets: everyone listed for `all`, or for the
+   *  ticket's category. */
+  const recipients = {
+    add: async (input: { email: string; scope?: string }) => {
+      const email = input.email.trim().toLowerCase();
+      await db
+        .insert(supportRecipients)
+        .values({ email, scope: input.scope ?? "all" })
+        .onConflictDoUpdate({
+          set: { scope: input.scope ?? "all" },
+          target: supportRecipients.email,
+        });
+      const [row] = await db
+        .select()
+        .from(supportRecipients)
+        .where(eq(supportRecipients.email, email));
+
+      return toSupportRecipient(row as RecipientRow);
+    },
+    for: async (category: string) =>
+      (
+        await db
+          .select({ email: supportRecipients.email })
+          .from(supportRecipients)
+          .where(
+            or(
+              eq(supportRecipients.scope, "all"),
+              eq(supportRecipients.scope, category),
+            ),
+          )
+      ).map((row) => row.email),
+    list: async () =>
+      (
+        await db
+          .select()
+          .from(supportRecipients)
+          .orderBy(asc(supportRecipients.email))
+      ).map(toSupportRecipient),
+    remove: async (recipientId: number) => {
+      const removed = await db
+        .delete(supportRecipients)
+        .where(eq(supportRecipients.id, recipientId))
+        .returning({ id: supportRecipients.id });
+
+      return removed.length > 0;
+    },
+  };
+
   return {
     analytics,
     assign,
+    attachments,
+    categoryCounts,
+    diagnostics,
+    editMessage,
+    findByReference,
     get,
+    getMessage,
     list,
     markRead,
     open,
+    recipients,
+    remove,
     reply,
+    setNotes,
     setPriority,
     setStatus,
     statusCounts,
+    unreadCount,
+    verdict,
   };
 };
 

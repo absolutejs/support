@@ -24,7 +24,12 @@ const SCHEMA = `
     source varchar(40) NOT NULL DEFAULT 'web',
     status varchar(16) NOT NULL DEFAULT 'open', subject varchar(255) NOT NULL,
     submission_id varchar(64), trace_id varchar(64),
-    updated_at timestamp NOT NULL DEFAULT now()
+    updated_at timestamp NOT NULL DEFAULT now(),
+    about_id varchar(255), about_type varchar(40), deleted_at timestamp,
+    diagnostic_note text, fix_commit varchar(120), fix_summary text,
+    fixed_at timestamp, follow_up_notes text, internal_notes text,
+    report jsonb, retest varchar(10), verified_at timestamp,
+    verified_by varchar(320)
   );
   CREATE UNIQUE INDEX support_tickets_submission_idx
     ON support_tickets (requester_email, submission_id);
@@ -33,7 +38,8 @@ const SCHEMA = `
     author_name varchar(255), body text NOT NULL,
     created_at timestamp NOT NULL DEFAULT now(),
     id bigserial PRIMARY KEY, internal boolean NOT NULL DEFAULT false,
-    ticket_id uuid NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE
+    ticket_id uuid NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
+    edited_at timestamp, kind varchar(16) NOT NULL DEFAULT 'reply', meta jsonb
   );
   CREATE TABLE support_events (
     actor varchar(320), at timestamp NOT NULL DEFAULT now(),
@@ -42,6 +48,26 @@ const SCHEMA = `
     ticket_id uuid NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
     to_value varchar(320)
   );
+  CREATE TABLE support_attachments (
+    created_at timestamp NOT NULL DEFAULT now(), id bigserial PRIMARY KEY,
+    kind varchar(16) NOT NULL, name varchar(255),
+    purpose varchar(8) NOT NULL DEFAULT 'report', size_bytes integer,
+    ticket_id uuid NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
+    uploaded_by varchar(320), url text NOT NULL
+  );
+  CREATE TABLE support_diagnostics (
+    bundle jsonb NOT NULL, capture_id varchar(128) NOT NULL,
+    created_at timestamp NOT NULL DEFAULT now(), expires_at timestamp NOT NULL,
+    id bigserial PRIMARY KEY, size_bytes integer NOT NULL DEFAULT 0,
+    ticket_id uuid NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE
+  );
+  CREATE UNIQUE INDEX support_diagnostics_capture_idx
+    ON support_diagnostics (ticket_id, capture_id);
+  CREATE TABLE support_recipients (
+    created_at timestamp NOT NULL DEFAULT now(), email varchar(320) NOT NULL,
+    id bigserial PRIMARY KEY, scope varchar(40) NOT NULL DEFAULT 'all'
+  );
+  CREATE UNIQUE INDEX support_recipients_email_idx ON support_recipients (email);
 `;
 
 let db: ReturnType<typeof drizzle>;
@@ -246,5 +272,212 @@ describe("lists and analytics", () => {
     expect(report.unanswered).toBe(1);
     expect(report.medianFirstResponseMs).not.toBeNull();
     expect(report.backlog).toEqual([{ count: 1, priority: "urgent" }]);
+  });
+});
+
+describe("the fix workflow", () => {
+  test("a fix waits on the requester, who confirms it closes it as fixed", async () => {
+    const ticket = await openOne({
+      report: { actual: "Nothing", expected: "A deploy", frequency: "always" },
+    });
+    const fix = await desk.reply({
+      author: AGENT,
+      body: "Fixed in the last release: try again.",
+      kind: "fix",
+      meta: { fixCommit: "a1b2c3d" },
+      ticketId: ticket.id,
+    });
+    expect(fix?.ticket.status).toBe("verifying");
+    expect(fix?.ticket.fix).toMatchObject({
+      commit: "a1b2c3d",
+      summary: "Fixed in the last release: try again.",
+    });
+    expect(fix?.ticket.retest).toBe("pending");
+    expect(fix?.ticket.firstResponseAt).not.toBeNull();
+    const confirmed = await desk.verdict({
+      by: { email: "ada@example.com" },
+      ticketId: ticket.id,
+      works: true,
+    });
+    expect(confirmed).not.toBe("not-verifying");
+    const after = await desk.get(ticket.id);
+    expect(after?.ticket).toMatchObject({
+      closeReason: "fixed",
+      report: { actual: "Nothing", expected: "A deploy", frequency: "always" },
+      retest: "pass",
+      status: "closed",
+      verifiedBy: "ada@example.com",
+    });
+    expect(after?.messages.map((message) => message.kind)).toEqual([
+      "reply",
+      "fix",
+      "resolution",
+    ]);
+  });
+
+  test("a fix that didn't hold reopens with what the requester said", async () => {
+    const ticket = await openOne();
+    await desk.reply({
+      author: AGENT,
+      body: "Try now.",
+      kind: "fix",
+      ticketId: ticket.id,
+    });
+    await desk.verdict({
+      by: { email: "ada@example.com" },
+      reason: "Still spins on Safari.",
+      ticketId: ticket.id,
+      works: false,
+    });
+    const after = await desk.get(ticket.id);
+    expect(after?.ticket).toMatchObject({
+      followUpNotes: "Still spins on Safari.",
+      retest: "fail",
+      status: "open",
+    });
+    expect(
+      await desk.verdict({
+        by: { email: "ada@example.com" },
+        ticketId: ticket.id,
+        works: true,
+      }),
+    ).toBe("not-verifying");
+  });
+
+  test("the requester's view leaves out notes, the diagnostic note and the fix's change", async () => {
+    const ticket = await openOne({ diagnosticNote: "viewport 390x844" });
+    await desk.setNotes({ internalNotes: "VIP", ticketId: ticket.id });
+    await desk.reply({
+      author: AGENT,
+      body: "Checking the logs.",
+      kind: "note",
+      ticketId: ticket.id,
+    });
+    await desk.reply({
+      author: AGENT,
+      body: "Fixed.",
+      kind: "fix",
+      meta: { fixCommit: "deadbeef" },
+      ticketId: ticket.id,
+    });
+    const theirs = await desk.get(ticket.id, { forRequester: true });
+    expect(theirs?.ticket.internalNotes).toBeNull();
+    expect(theirs?.ticket.diagnosticNote).toBeNull();
+    expect(theirs?.ticket.fix?.commit).toBeNull();
+    expect(theirs?.messages.map((message) => message.kind)).toEqual([
+      "reply",
+      "fix",
+    ]);
+    expect(theirs?.messages[1]?.meta?.fixCommit).toBeUndefined();
+    const ours = await desk.get(ticket.id);
+    expect(ours?.ticket.internalNotes).toBe("VIP");
+    expect(ours?.messages).toHaveLength(3);
+  });
+});
+
+describe("around a ticket", () => {
+  test("attachments are evidence or proof, and touch the ticket", async () => {
+    const ticket = await openOne();
+    await desk.attachments.add({
+      kind: "image",
+      name: "screen.png",
+      sizeBytes: 1200,
+      ticketId: ticket.id,
+      url: "https://files.test/screen.png",
+    });
+    const proof = await desk.attachments.add({
+      kind: "video",
+      purpose: "fix",
+      ticketId: ticket.id,
+      url: "https://files.test/fixed.mp4",
+    });
+    expect(
+      (await desk.attachments.list(ticket.id)).map((file) => file.purpose),
+    ).toEqual(["report", "fix"]);
+    expect(await desk.attachments.remove(proof?.id ?? 0)).toBe(true);
+    expect(await desk.attachments.list(ticket.id)).toHaveLength(1);
+  });
+
+  test("a diagnostic capture is stored once and goes when it expires", async () => {
+    const ticket = await openOne();
+    const capture = {
+      bundle: { archive: { manifest: { id: "cap-1" } } },
+      captureId: "cap-1",
+      expiresAt: new Date(Date.now() + 60_000),
+      sizeBytes: 20,
+      ticketId: ticket.id,
+    };
+    const first = await desk.diagnostics.store(capture);
+    const again = await desk.diagnostics.store(capture);
+    expect(again?.id).toBe(first?.id ?? -1);
+    await desk.diagnostics.store({
+      ...capture,
+      captureId: "cap-old",
+      expiresAt: new Date(Date.now() - 1000),
+    });
+    expect(
+      (await desk.diagnostics.list(ticket.id)).map((entry) => entry.captureId),
+    ).toEqual(["cap-1"]);
+  });
+
+  test("recipients hear about everything, or about one category", async () => {
+    await desk.recipients.add({ email: "Owner@Shop.test" });
+    await desk.recipients.add({ email: "dev@shop.test", scope: "bug" });
+    expect((await desk.recipients.for("bug")).sort()).toEqual([
+      "dev@shop.test",
+      "owner@shop.test",
+    ]);
+    expect(await desk.recipients.for("order")).toEqual(["owner@shop.test"]);
+  });
+
+  test("a guest finds their ticket by its reference and their email", async () => {
+    const ticket = await openOne();
+    const reference = ticket.id.replaceAll("-", "").slice(0, 8).toUpperCase();
+    expect(
+      (await desk.findByReference({ email: "ada@example.com", reference }))?.id,
+    ).toBe(ticket.id);
+    expect(
+      await desk.findByReference({ email: "someone@else.test", reference }),
+    ).toBeNull();
+  });
+
+  test("a deleted ticket leaves every list and read", async () => {
+    const ticket = await openOne();
+    await desk.remove(ticket.id, "agent@absolutejs.ai");
+    expect(await desk.get(ticket.id)).toBeNull();
+    expect((await desk.list()).total).toBe(0);
+    expect(await desk.unreadCount()).toBe(0);
+  });
+
+  test("an edited message says so", async () => {
+    const ticket = await openOne();
+    const posted = await desk.reply({
+      author: AGENT,
+      body: "Lookin into it",
+      ticketId: ticket.id,
+    });
+    const edited = await desk.editMessage({
+      body: "Looking into it.",
+      messageId: posted?.message.id ?? 0,
+    });
+    expect(edited?.body).toBe("Looking into it.");
+    expect(edited?.editedAt).not.toBeNull();
+  });
+
+  test("an agent's reply to a ticket in progress waits on the requester", async () => {
+    const ticket = await openOne({ category: "bug" });
+    await desk.setStatus({ status: "in-progress", ticketId: ticket.id });
+    const replied = await desk.reply({
+      author: AGENT,
+      body: "Which browser?",
+      ticketId: ticket.id,
+    });
+    expect(replied?.ticket.status).toBe("pending");
+    expect(
+      (await desk.list({ category: "bug", sort: "created" })).tickets,
+    ).toHaveLength(1);
+    expect(await desk.categoryCounts()).toEqual([
+      { category: "bug", count: 1 },
+    ]);
   });
 });

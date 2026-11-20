@@ -5,6 +5,51 @@
 		{
 			"changes": [
 				{
+					"detail": "Everything a problem-report desk does, added beside what was there (nothing renamed, every new column optional). Tickets can carry the bug form (report: expected, actual, steps, frequency), what they're about (about: type and id), a diagnostic note and internal notes for the agents, the fix (summary, commit, when), the retest result, who verified it, follow-up notes, and a soft-delete time. Two statuses: in-progress, and verifying (a fix is out, waiting for the requester). Messages have a kind (reply, note, fix, resolution, reject), a meta snapshot and an edited time: a fix waits in verifying with retest pending, a resolution closes as fixed, a reject reopens with what was said, and verdict() is the requester's word on a fix. New tables and calls: attachments (evidence or proof of a fix), diagnostics (a browser's capture, kept until it expires), recipients (who hears about new tickets, for all or one category); editMessage, getMessage, setNotes, remove (soft delete), findByReference (a guest's own ticket), unreadCount, categoryCounts; list() filters by category and several statuses, searches the requester's name, and sorts. A requester's view (forRequesterTicket, forRequesterMessage) leaves out internal notes, the diagnostic note and the fix's commit. Applications add the new columns and tables with a migration from the exported schema.",
+					"kind": "added",
+					"summary": "Problem reports, fixes the requester verifies, attachments, diagnostics and recipients",
+					"symbols": [
+						"ATTACHMENT_PURPOSES",
+						"MESSAGE_KINDS",
+						"RETEST_RESULTS",
+						"SupportAttachment",
+						"SupportDesk",
+						"SupportDiagnostic",
+						"SupportMessage",
+						"SupportRecipient",
+						"SupportTicket",
+						"TICKET_STATUSES",
+						"TicketChange",
+						"TicketListQuery",
+						"TicketSort",
+						"TicketStatus",
+						"createSupportDesk",
+						"forRequesterMessage",
+						"forRequesterTicket",
+						"supportAttachments",
+						"supportDiagnostics",
+						"supportDrizzleSchema",
+						"supportMessages",
+						"supportRecipients",
+						"supportTickets",
+						"toSupportMessage",
+						"toSupportTicket",
+						"AttachmentPurpose",
+						"MessageKind",
+						"MessageMeta",
+						"RetestResult",
+						"TicketReport",
+						"OpenTicketInput",
+						"ReplyInput"
+					]
+				}
+			],
+			"date": "2026-11-20",
+			"version": "0.2.0-beta.0"
+		},
+		{
+			"changes": [
+				{
 					"detail": "markRead now updates only a ticket whose flag is still set and returns true when it cleared one, false when there was nothing to clear. Opening a read ticket is no longer a write, so a change feed or table trigger watching support_tickets (live updates) no longer sees a change on every read, which made a page that marks a ticket read when it loads refetch it forever.",
 					"kind": "changed",
 					"summary": "markRead writes nothing when the ticket is already read, and returns whether it changed anything",
