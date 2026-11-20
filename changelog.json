@@ -5,6 +5,28 @@
 		{
 			"changes": [
 				{
+					"detail": "support_attachments, support_diagnostics and support_recipients (new in 0.2.0-beta.0) key their rows by uuid, like support_tickets, instead of a bigserial: an application that already kept these records (with uuid ids) can grow its own tables into the package's in place, without renumbering. SupportAttachment, SupportDiagnostic and SupportRecipient ids are strings, and attachments.remove, diagnostics.remove and recipients.remove take one. No application has these tables yet outside the betas.",
+					"kind": "changed",
+					"summary": "Attachments, diagnostics and recipients have uuid ids",
+					"symbols": [
+						"SupportAttachment",
+						"SupportDiagnostic",
+						"SupportRecipient",
+						"SupportDesk",
+						"createSupportDesk",
+						"supportAttachments",
+						"supportDiagnostics",
+						"supportRecipients",
+						"supportDrizzleSchema"
+					]
+				}
+			],
+			"date": "2026-11-20",
+			"version": "0.2.0-beta.3"
+		},
+		{
+			"changes": [
+				{
 					"detail": "open() stays idempotent per submission when two retries arrive at the same moment: the second lands on the unique index and gets the ticket the first opened, where before it threw a constraint error. list({ query }) also finds words anywhere in a ticket's conversation, not only its subject and requester.",
 					"kind": "fixed",
 					"summary": "Concurrent retries of one submission open one ticket; search looks in the conversation",

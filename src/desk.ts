@@ -106,7 +106,7 @@ export type SupportMessage = {
 
 export type SupportAttachment = {
   createdAt: number;
-  id: number;
+  id: string;
   kind: string;
   name: string | null;
   purpose: AttachmentPurpose;
@@ -121,7 +121,7 @@ export type SupportDiagnostic = {
   captureId: string;
   createdAt: number;
   expiresAt: number;
-  id: number;
+  id: string;
   sizeBytes: number;
   ticketId: string;
 };
@@ -129,7 +129,7 @@ export type SupportDiagnostic = {
 export type SupportRecipient = {
   createdAt: number;
   email: string;
-  id: number;
+  id: string;
   scope: string;
 };
 
@@ -205,7 +205,7 @@ export const toSupportMessage = (row: MessageRow): SupportMessage => ({
 
 const toSupportAttachment = (row: AttachmentRow): SupportAttachment => ({
   createdAt: row.created_at.getTime(),
-  id: Number(row.id),
+  id: row.id,
   kind: row.kind,
   name: row.name,
   purpose: row.purpose,
@@ -220,7 +220,7 @@ const toSupportDiagnostic = (row: DiagnosticRow): SupportDiagnostic => ({
   captureId: row.capture_id,
   createdAt: row.created_at.getTime(),
   expiresAt: row.expires_at.getTime(),
-  id: Number(row.id),
+  id: row.id,
   sizeBytes: row.size_bytes,
   ticketId: row.ticket_id,
 });
@@ -228,7 +228,7 @@ const toSupportDiagnostic = (row: DiagnosticRow): SupportDiagnostic => ({
 const toSupportRecipient = (row: RecipientRow): SupportRecipient => ({
   createdAt: row.created_at.getTime(),
   email: row.email,
-  id: Number(row.id),
+  id: row.id,
   scope: row.scope,
 });
 
@@ -1146,7 +1146,7 @@ export const createSupportDesk = (options: CreateSupportDeskOptions) => {
             asc(supportAttachments.id),
           )
       ).map(toSupportAttachment),
-    remove: async (attachmentId: number) => {
+    remove: async (attachmentId: string) => {
       const removed = await db
         .delete(supportAttachments)
         .where(eq(supportAttachments.id, attachmentId))
@@ -1185,7 +1185,7 @@ export const createSupportDesk = (options: CreateSupportDeskOptions) => {
 
       return removed.length;
     },
-    remove: async (diagnosticId: number) => {
+    remove: async (diagnosticId: string) => {
       const removed = await db
         .delete(supportDiagnostics)
         .where(eq(supportDiagnostics.id, diagnosticId))
@@ -1264,7 +1264,7 @@ export const createSupportDesk = (options: CreateSupportDeskOptions) => {
           .from(supportRecipients)
           .orderBy(asc(supportRecipients.email))
       ).map(toSupportRecipient),
-    remove: async (recipientId: number) => {
+    remove: async (recipientId: string) => {
       const removed = await db
         .delete(supportRecipients)
         .where(eq(supportRecipients.id, recipientId))
