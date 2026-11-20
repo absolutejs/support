@@ -101,6 +101,7 @@ export type SupportMessage = {
   internal: boolean;
   kind: MessageKind;
   meta: MessageMeta | null;
+  ticketId: string;
 };
 
 export type SupportAttachment = {
@@ -199,6 +200,7 @@ export const toSupportMessage = (row: MessageRow): SupportMessage => ({
   internal: row.internal,
   kind: row.kind,
   meta: row.meta,
+  ticketId: row.ticket_id,
 });
 
 const toSupportAttachment = (row: AttachmentRow): SupportAttachment => ({
@@ -487,7 +489,13 @@ export const createSupportDesk = (options: CreateSupportDeskOptions) => {
     else if (kind === "resolution") status = "closed";
     else if (kind === "reject") status = "open";
     else if (internal) status = ticket.status;
-    else if (input.author.kind === "requester") status = "open";
+    /* A requester writing back needs the agents again, unless somebody is
+     * already on it or a fix is waiting on their verdict. */
+    else if (input.author.kind === "requester")
+      status =
+        ticket.status === "in-progress" || ticket.status === "verifying"
+          ? ticket.status
+          : "open";
     else if (ticket.status === "open" || ticket.status === "in-progress")
       status = "pending";
     const statusChanged = status !== ticket.status;

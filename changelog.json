@@ -5,6 +5,24 @@
 		{
 			"changes": [
 				{
+					"detail": "A message now carries its ticketId, so an application can check that a message belongs to the ticket in the URL before an edit. A requester's reply no longer takes a ticket out of in-progress (somebody is already on it) or out of verifying (a fix waits on their verdict, which only verdict() gives); from any other status it still reopens it.",
+					"kind": "changed",
+					"summary": "Messages say which ticket they're on; a requester's reply leaves in-progress and verifying tickets where they are",
+					"symbols": [
+						"SupportMessage",
+						"createSupportDesk",
+						"SupportDesk",
+						"toSupportMessage",
+						"forRequesterMessage"
+					]
+				}
+			],
+			"date": "2026-11-20",
+			"version": "0.2.0-beta.1"
+		},
+		{
+			"changes": [
+				{
 					"detail": "Everything a problem-report desk does, added beside what was there (nothing renamed, every new column optional). Tickets can carry the bug form (report: expected, actual, steps, frequency), what they're about (about: type and id), a diagnostic note and internal notes for the agents, the fix (summary, commit, when), the retest result, who verified it, follow-up notes, and a soft-delete time. Two statuses: in-progress, and verifying (a fix is out, waiting for the requester). Messages have a kind (reply, note, fix, resolution, reject), a meta snapshot and an edited time: a fix waits in verifying with retest pending, a resolution closes as fixed, a reject reopens with what was said, and verdict() is the requester's word on a fix. New tables and calls: attachments (evidence or proof of a fix), diagnostics (a browser's capture, kept until it expires), recipients (who hears about new tickets, for all or one category); editMessage, getMessage, setNotes, remove (soft delete), findByReference (a guest's own ticket), unreadCount, categoryCounts; list() filters by category and several statuses, searches the requester's name, and sorts. A requester's view (forRequesterTicket, forRequesterMessage) leaves out internal notes, the diagnostic note and the fix's commit. Applications add the new columns and tables with a migration from the exported schema.",
 					"kind": "added",
 					"summary": "Problem reports, fixes the requester verifies, attachments, diagnostics and recipients",
