@@ -401,16 +401,21 @@ export const createSupportDesk = (options: CreateSupportDeskOptions) => {
    *  submission already opened. */
   const open = async (input: OpenTicketInput) => {
     const email = input.requester.email.trim().toLowerCase();
-    if (input.submissionId !== undefined) {
+    const submitted = async (submissionId: string) => {
       const [existing] = await db
         .select()
         .from(supportTickets)
         .where(
           and(
             eq(supportTickets.requester_email, email),
-            eq(supportTickets.submission_id, input.submissionId),
+            eq(supportTickets.submission_id, submissionId),
           ),
         );
+
+      return existing;
+    };
+    if (input.submissionId !== undefined) {
+      const existing = await submitted(input.submissionId);
       if (existing) return toSupportTicket(existing);
     }
     const [ticket] = await db
@@ -433,8 +438,22 @@ export const createSupportDesk = (options: CreateSupportDeskOptions) => {
         submission_id: input.submissionId ?? null,
         trace_id: input.traceId ?? null,
       })
+      /* A retry racing this one past the read above lands on the unique
+       * index: it gets the ticket the first one opened, not an error. */
+      .onConflictDoNothing({
+        target: [supportTickets.requester_email, supportTickets.submission_id],
+      })
       .returning();
-    const opened = ticket as TicketRow;
+    if (!ticket) {
+      const raced =
+        input.submissionId === undefined
+          ? undefined
+          : await submitted(input.submissionId);
+      if (!raced) throw new Error("The ticket could not be opened");
+
+      return toSupportTicket(raced);
+    }
+    const opened = ticket;
     const [message] = await db
       .insert(supportMessages)
       .values({
@@ -729,6 +748,7 @@ export const createSupportDesk = (options: CreateSupportDeskOptions) => {
         ilike(supportTickets.subject, text),
         ilike(supportTickets.requester_email, text),
         ilike(supportTickets.requester_name, text),
+        sql`exists (select 1 from ${supportMessages} where ${supportMessages.ticket_id} = ${supportTickets.id} and ${supportMessages.body} ilike ${text})`,
       );
       if (match) filters.push(match);
     }
